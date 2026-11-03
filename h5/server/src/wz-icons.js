@@ -4,11 +4,8 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import * as wz from '@tybys/wz';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.resolve(__dirname, '../../../../BeiDou-ClientV17/BeiDou-Client/Data');
+import { DATA_DIR } from './wz-data.js';
 
 const CATEGORY_DIR = { 2: 'Consume', 3: 'Install', 4: 'Etc', 5: 'Cash', 9: 'Special' };
 const iconCache = new Map();
@@ -24,7 +21,7 @@ function pad(num, len) {
 /** 建立“装备ID → 所在 img”索引，例如 1382007 → Character/Weapon/01382007.img。
  *  Character.wz 中每件装备一个 img，文件名即 8 位 itemId，必须精确匹配，
  *  否则同前缀（如 0138）的几十件装备会全部显示成第一件的图标。 */
-function equipFileRel(itemId) {
+export function equipFileRel(itemId) {
   if (!equipIndex) {
     equipIndex = new Map();
     const root = path.join(DATA_DIR, 'Character');

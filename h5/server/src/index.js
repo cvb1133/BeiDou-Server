@@ -16,6 +16,7 @@ import mysql from 'mysql2/promise';
 import { getItemIcon } from './wz-icons.js';
 import { getMapThumb, getMobIcon } from './wz-map.js';
 import { getAvatarPng } from './wz-avatar.js';
+import { getItemDetail } from './wz-items.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const H5_ROOT = path.resolve(__dirname, '../..');
@@ -205,6 +206,25 @@ app.post('/api/reward/discard', auth, wrap(async (req, res) => {
   res.json({ ok: true, data: await callGame('reward/discard', { characterId, itemIds }) });
 }));
 
+app.post('/api/item/drop', auth, wrap(async (req, res) => {
+  const characterId = await assertOwned(req.session.accountId, req.body?.characterId);
+  const inventoryType = Number(req.body?.inventoryType);
+  const position = Number(req.body?.position);
+  const quantity = Number(req.body?.quantity) || 0;
+  res.json({ ok: true, data: await callGame('item/drop', { characterId, inventoryType, position, quantity }) });
+}));
+
+app.post('/api/item/gift', auth, wrap(async (req, res) => {
+  const characterId = await assertOwned(req.session.accountId, req.body?.characterId);
+  const inventoryType = Number(req.body?.inventoryType);
+  const position = Number(req.body?.position);
+  const quantity = Number(req.body?.quantity) || 0;
+  const receiverName = String(req.body?.receiverName || '').trim();
+  if (!receiverName) throw new Error('请输入收件人角色名');
+  const message = String(req.body?.message || '').trim().slice(0, 100);
+  res.json({ ok: true, data: await callGame('item/gift', { characterId, inventoryType, position, quantity, receiverName, message }) });
+}));
+
 /** 角色纸娃娃形象：按 skincolor/hair/face + 已穿戴装备合成 PNG */
 app.get('/api/avatar/:characterId', auth, wrap(async (req, res) => {
   const characterId = await assertOwned(req.session.accountId, req.params.characterId);
@@ -235,6 +255,13 @@ app.get('/api/item-icon/:itemId', wrap(async (req, res) => {
   res.setHeader('Content-Type', 'image/png');
   res.setHeader('Cache-Control', 'public, max-age=604800');
   res.send(png);
+}));
+
+app.get('/api/item-detail/:itemId', wrap(async (req, res) => {
+  const detail = await getItemDetail(Number(req.params.itemId));
+  if (!detail) return res.sendStatus(404);
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  res.json(detail);
 }));
 
 app.get('/api/map-thumb/:mapId', wrap(async (req, res) => {

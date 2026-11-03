@@ -62,6 +62,19 @@ async function request(path, body) {
   return json.data === undefined ? json : json.data;
 }
 
+async function requestGet(path) {
+  const resp = await fetch(`/api/${path}`, {
+    headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+  });
+  if (resp.status === 401) {
+    clearSession();
+    window.location.reload();
+    throw new Error('登录已过期，请重新登录');
+  }
+  if (!resp.ok) throw new Error(`请求失败（HTTP ${resp.status}）`);
+  return resp.json();
+}
+
 async function requestImage(path) {
   const resp = await fetch(`/api/${path}`, {
     headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
@@ -82,6 +95,8 @@ export const api = {
   characterInfo: (characterId) => request('character/info', { characterId }),
   /** 纸娃娃形象：返回 blob objectURL（图片请求无法带 Authorization 头，这里手动拉取） */
   avatar: (characterId) => requestImage(`avatar/${characterId}`),
+  /** 物品详情（客户端 tooltip 元数据） */
+  itemDetail: (itemId) => requestGet(`item-detail/${itemId}`),
   maps: (characterId) => request('maps', { characterId }),
   mapDetail: (characterId, mapId) => request('map/detail', { characterId, mapId }),
   drops: (characterId, mapId) => request('drops', { characterId, mapId }),
@@ -93,6 +108,10 @@ export const api = {
   settle: (characterId, mapId) => request('settle', { characterId, mapId }),
   claim: (characterId) => request('claim', { characterId }),
   discardRewardItems: (characterId, itemIds) => request('reward/discard', { characterId, itemIds }),
+  /** 丢弃背包物品（不可找回） */
+  dropItem: (characterId, payload) => request('item/drop', { characterId, ...payload }),
+  /** 赠送背包物品给其他角色（快递送达） */
+  giftItem: (characterId, payload) => request('item/gift', { characterId, ...payload }),
 };
 
 export function itemIconUrl(itemId) {

@@ -5,11 +5,8 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import * as wz from '@tybys/wz';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.resolve(__dirname, '../../../../BeiDou-ClientV17/BeiDou-Client/Data');
+import { DATA_DIR } from './wz-data.js';
 
 const pngCache = new Map();
 const fileCache = new Map();

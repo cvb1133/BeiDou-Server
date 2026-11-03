@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api, formatNumber, itemIconUrl } from '../api';
 import BottomNav from '../components/BottomNav.vue';
+import ItemDetail from '../components/ItemDetail.vue';
 import PowerHelp from '../components/PowerHelp.vue';
 
 const props = defineProps({
@@ -14,7 +15,10 @@ const loading = ref(true);
 const error = ref('');
 const tab = ref('stats');
 const bagTab = ref('use');
-const equipDetail = ref(null);
+const detailItem = ref(null);
+const detailExtra = ref(null);
+const detailLoading = ref(false);
+let detailSeq = 0;
 const powerHelpOpen = ref(false);
 
 const avatarSrc = ref('');
@@ -33,6 +37,113 @@ async function loadAvatar() {
     avatarState.value = 'ok';
   } catch {
     avatarState.value = 'fail';
+  }
+}
+
+/** 单击装备/道具：先用本地已有属性渲染，再异步补全 WZ 需求与描述 */
+async function openDetail(item) {
+  detailItem.value = item;
+  detailExtra.value = null;
+  detailLoading.value = true;
+  const seq = ++detailSeq;
+  try {
+    const detail = await api.itemDetail(item.itemId);
+    if (seq === detailSeq) detailExtra.value = detail;
+  } catch {
+    if (seq === detailSeq) detailExtra.value = {};
+  } finally {
+    if (seq === detailSeq) detailLoading.value = false;
+  }
+}
+
+function closeDetail() {
+  detailSeq += 1;
+  detailItem.value = null;
+  detailExtra.value = null;
+  detailLoading.value = false;
+}
+
+/* ---------- 丢弃 / 赠送 ---------- */
+const itemAction = ref(null);
+const actionBusy = ref(false);
+const giftForm = ref({ receiver: '', message: '', quantity: 1 });
+const toast = ref(null);
+let toastTimer = null;
+
+/** 装备栏位为 1，不可堆叠，数量固定为 1 */
+const actionStackable = computed(() => {
+  const item = itemAction.value?.item;
+  if (!item) return false;
+  return Number(item.inventoryType ?? (Math.floor(Number(item.itemId) / 1000000) === 1 ? 1 : 0)) !== 1;
+});
+
+function showToast(text, type = 'ok') {
+  toast.value = { text, type };
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (toast.value = null), 2200);
+}
+
+function openAction(kind) {
+  const item = detailItem.value;
+  if (!item) return;
+  closeDetail();
+  giftForm.value = { receiver: '', message: '', quantity: Number(item.quantity) || 1 };
+  itemAction.value = { kind, item };
+}
+
+function closeAction() {
+  if (actionBusy.value) return;
+  itemAction.value = null;
+}
+
+function actionPayload(item) {
+  return {
+    inventoryType: Number(item.inventoryType ?? (Math.floor(Number(item.itemId) / 1000000) === 1 ? 1 : 0)),
+    position: Number(item.position),
+  };
+}
+
+async function submitDrop() {
+  if (actionBusy.value) return;
+  const item = itemAction.value.item;
+  actionBusy.value = true;
+  try {
+    info.value = await api.dropItem(props.character.characterId, {
+      ...actionPayload(item),
+      quantity: actionStackable.value ? Number(item.quantity) : 1,
+    });
+    itemAction.value = null;
+    showToast(`已丢弃「${item.itemName}」`);
+  } catch (e) {
+    showToast(e.message || '丢弃失败', 'error');
+  } finally {
+    actionBusy.value = false;
+  }
+}
+
+async function submitGift() {
+  if (actionBusy.value) return;
+  const item = itemAction.value.item;
+  if (!giftForm.value.receiver) {
+    showToast('请输入收件人角色名', 'error');
+    return;
+  }
+  const max = Number(item.quantity) || 1;
+  const quantity = actionStackable.value ? Math.min(Math.max(1, Number(giftForm.value.quantity) || 1), max) : 1;
+  actionBusy.value = true;
+  try {
+    info.value = await api.giftItem(props.character.characterId, {
+      ...actionPayload(item),
+      quantity,
+      receiverName: giftForm.value.receiver,
+      message: giftForm.value.message,
+    });
+    itemAction.value = null;
+    showToast(`已将「${item.itemName}」寄给 ${giftForm.value.receiver}`);
+  } catch (e) {
+    showToast(e.message || '赠送失败', 'error');
+  } finally {
+    actionBusy.value = false;
   }
 }
 
@@ -278,7 +389,7 @@ onUnmounted(() => {
             v-for="e in info.equipped"
             :key="e.itemId + '-' + e.position"
             class="equip-cell on"
-            @click="equipDetail = e"
+            @click="openDetail(e)"
           >
             <img :src="itemIconUrl(e.itemId)" class="icon pixel-img" alt="" @error="(ev) => (ev.target.style.visibility = 'hidden')" />
             <span class="equip-name">{{ e.itemName }}</span>
@@ -296,7 +407,7 @@ onUnmounted(() => {
             v-for="e in info.equips"
             :key="e.itemId + '-' + e.position"
             class="equip-cell"
-            @click="equipDetail = e"
+            @click="openDetail(e)"
           >
             <img :src="itemIconUrl(e.itemId)" class="icon pixel-img" alt="" @error="(ev) => (ev.target.style.visibility = 'hidden')" />
             <span class="equip-name">{{ e.itemName }}</span>
@@ -320,7 +431,7 @@ onUnmounted(() => {
           </button>
         </div>
         <div class="item-list">
-          <div v-for="it in bagList" :key="it.itemId + '-' + it.position" class="item">
+          <div v-for="it in bagList" :key="it.itemId + '-' + it.position" class="item" @click="openDetail(it)">
             <img :src="itemIconUrl(it.itemId)" class="icon pixel-img" alt="" @error="(ev) => (ev.target.style.visibility = 'hidden')" />
             <span class="item-name">{{ it.itemName }}</span>
             <span class="item-qty gold-text">×{{ it.quantity }}</span>
@@ -330,35 +441,67 @@ onUnmounted(() => {
       </section>
     </template>
 
-    <transition name="fade">
-      <div v-if="equipDetail" class="mask" @click.self="equipDetail = null">
-        <div class="sheet">
-          <header class="sheet-head">
-            <div class="sheet-title">
-              <img :src="itemIconUrl(equipDetail.itemId)" class="icon big pixel-img" alt="" @error="(ev) => (ev.target.style.visibility = 'hidden')" />
-              <div>
-                <strong>{{ equipDetail.itemName }}</strong>
-                <div class="muted">
-                  {{ equipDetail.equipped ? '已装备' : `装备栏 #${equipDetail.position}` }}
-                  <template v-if="equipDetail.level > 0"> · +{{ equipDetail.level }}</template>
-                </div>
-              </div>
-            </div>
-            <button class="close" @click="equipDetail = null">✕</button>
-          </header>
-          <div class="detail-grid">
-            <div><span class="muted">剩余升级次数</span><strong>{{ equipDetail.upgradeSlots }}</strong></div>
-            <div><span class="muted">需求等级</span><strong>{{ equipDetail.reqLevel }}</strong></div>
-            <div v-for="line in EQUIP_LINES" :key="line.key">
-              <span class="muted">{{ line.label }}</span>
-              <strong :class="{ zero: Number(equipDetail[line.key] || 0) === 0 }">
-                {{ Number(equipDetail[line.key] || 0) === 0 ? '—' : `+${equipDetail[line.key]}` }}
-              </strong>
-            </div>
+    <ItemDetail
+      v-if="detailItem"
+      :item="detailItem"
+      :detail="detailExtra"
+      :loading="detailLoading"
+      @close="closeDetail"
+      @drop="openAction('drop')"
+      @gift="openAction('gift')"
+    />
+
+    <div v-if="itemAction" class="action-mask" @click.self="closeAction">
+      <div class="action-card">
+        <div class="action-head">
+          <img :src="itemIconUrl(itemAction.item.itemId)" class="icon pixel-img" alt="" />
+          <div class="action-title">
+            <strong>{{ itemAction.item.itemName }}</strong>
+            <span class="muted">
+              {{ itemAction.kind === 'drop' ? '丢弃后无法找回' : '通过快递寄给对方' }}
+            </span>
           </div>
+          <button class="action-x" @click="closeAction">✕</button>
         </div>
+
+        <template v-if="itemAction.kind === 'gift'">
+          <label class="field">
+            <span>收件人角色名</span>
+            <input v-model.trim="giftForm.receiver" maxlength="13" placeholder="请输入对方角色名" />
+          </label>
+          <label v-if="actionStackable" class="field">
+            <span>赠送数量</span>
+            <input v-model.number="giftForm.quantity" type="number" min="1" :max="Number(itemAction.item.quantity)" />
+          </label>
+          <label class="field">
+            <span>留言（可选）</span>
+            <input v-model.trim="giftForm.message" maxlength="100" placeholder="最多 100 字" />
+          </label>
+          <div class="action-tip muted">赠送的物品会以快递包裹送达，对方需在游戏内找快递员领取。</div>
+          <div class="action-btns">
+            <button class="btn ghost" :disabled="actionBusy" @click="closeAction">取消</button>
+            <button class="btn gold" :disabled="actionBusy" @click="submitGift">
+              {{ actionBusy ? '提交中…' : '确认赠送' }}
+            </button>
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="action-tip">
+            确定丢弃「{{ itemAction.item.itemName }}」<template v-if="actionStackable"> ×{{ itemAction.item.quantity }}</template>吗？
+            物品将直接从背包移除，无法找回。
+          </div>
+          <div class="action-btns">
+            <button class="btn ghost" :disabled="actionBusy" @click="closeAction">取消</button>
+            <button class="btn danger" :disabled="actionBusy" @click="submitDrop">
+              {{ actionBusy ? '提交中…' : '确认丢弃' }}
+            </button>
+          </div>
+        </template>
       </div>
-    </transition>
+    </div>
+
+    <div v-if="toast" class="toast" :class="toast.type">{{ toast.text }}</div>
 
     <BottomNav active="info" @hangup="emit('back')" @info="scrollToTop" />
     <PowerHelp :show="powerHelpOpen" @close="powerHelpOpen = false" />
@@ -818,10 +961,6 @@ onUnmounted(() => {
   background: rgba(47, 143, 94, 0.12);
 }
 
-.equip-cell:active {
-  transform: scale(0.99);
-}
-
 .icon {
   width: 26px;
   height: 26px;
@@ -891,6 +1030,12 @@ onUnmounted(() => {
   border-radius: 6px;
   background: rgba(10, 30, 42, 0.5);
   border: 1px solid var(--line-soft);
+  cursor: pointer;
+}
+
+.item:active,
+.equip-cell:active {
+  transform: scale(0.99);
 }
 
 .item-name {
@@ -921,87 +1066,140 @@ onUnmounted(() => {
   color: #ffb3b3;
 }
 
-.mask {
+/* ---------- 丢弃 / 赠送弹层 ---------- */
+.action-mask {
   position: fixed;
   inset: 0;
-  z-index: 30;
-  background: rgba(3, 12, 18, 0.75);
+  z-index: 60;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
+  padding: 24px 18px;
+  background: rgba(2, 8, 14, 0.72);
+  backdrop-filter: blur(2px);
 }
 
-.sheet {
+.action-card {
   width: 100%;
-  max-width: 560px;
-  max-height: 80vh;
+  max-width: 360px;
+  max-height: 82vh;
   overflow-y: auto;
-  border-radius: 16px 16px 0 0;
-  padding: 16px 16px calc(16px + var(--safe-bottom));
-  background: linear-gradient(180deg, #1b394b 0%, #0b1d29 100%);
-  border-top: 1px solid rgba(214, 166, 91, 0.5);
-  box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.6);
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(214, 166, 91, 0.55);
+  background: linear-gradient(180deg, #16334a 0%, #0c2233 100%);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
 }
 
-.sheet-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.sheet-title {
+.action-head {
   display: flex;
   align-items: center;
   gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.sheet-title strong {
-  font-size: 15px;
-}
-
-.sheet-title .muted {
-  font-size: 11px;
-  margin-top: 3px;
-}
-
-.close {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  color: var(--text-dim);
-  font-size: 14px;
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.detail-grid {
-  margin-top: 14px;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-}
-
-.detail-grid > div {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
+.action-head .icon {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  padding: 3px;
   border-radius: 6px;
-  background: rgba(10, 30, 42, 0.55);
-  border: 1px solid var(--line-soft);
-  font-size: 12px;
+  border: 1px solid rgba(214, 166, 91, 0.45);
+  background: radial-gradient(circle at 50% 30%, #29506b, #0c1b27 70%);
 }
 
-.detail-grid strong.zero {
+.action-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.action-title strong {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.action-title .muted {
+  font-size: 11px;
+}
+
+.action-x {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text-dim);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 12px;
+  font-size: 12px;
   color: var(--text-dim);
 }
 
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.18s ease;
+.field input {
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  border: 1px solid rgba(214, 166, 91, 0.4);
+  background: rgba(3, 12, 20, 0.65);
 }
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+
+.action-tip {
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.action-btns {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.action-btns .btn {
+  flex: 1;
+}
+
+.btn.danger {
+  border-color: #ffb3b3;
+  background: linear-gradient(180deg, #f08a8a 0%, #d04444 55%, #a52323 100%);
+  color: #2a0505;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 3px 0 #651010, 0 6px 14px rgba(0, 0, 0, 0.38);
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 92px;
+  z-index: 70;
+  transform: translateX(-50%);
+  max-width: 82vw;
+  padding: 9px 16px;
+  border-radius: 999px;
+  font-size: 12px;
+  text-align: center;
+  color: #d8ffe4;
+  border: 1px solid rgba(120, 230, 160, 0.45);
+  background: rgba(12, 46, 30, 0.92);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.toast.error {
+  color: #ffd9d9;
+  border-color: rgba(230, 120, 120, 0.5);
+  background: rgba(56, 16, 16, 0.92);
 }
 </style>

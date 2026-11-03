@@ -9,6 +9,7 @@ import org.gms.model.dto.H5CharacterRtnDTO;
 import org.gms.model.dto.H5HangupClaimRtnDTO;
 import org.gms.model.dto.H5HangupReqDTO;
 import org.gms.model.dto.H5HangupRtnDTO;
+import org.gms.model.dto.H5ItemReqDTO;
 import org.gms.model.dto.H5MapDetailRtnDTO;
 import org.gms.model.dto.H5MapRtnDTO;
 import org.gms.model.dto.H5WhitelistRtnDTO;
@@ -16,6 +17,7 @@ import org.gms.model.dto.ResultBody;
 import org.gms.model.dto.SubmitBody;
 import org.gms.service.H5CharacterInfoService;
 import org.gms.service.H5HangupService;
+import org.gms.service.H5ItemService;
 import org.gms.util.I18nUtil;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -39,12 +41,14 @@ public class H5Controller {
 
     private final H5HangupService h5HangupService;
     private final H5CharacterInfoService h5CharacterInfoService;
+    private final H5ItemService h5ItemService;
     private final String secret;
 
     public H5Controller(H5HangupService h5HangupService, H5CharacterInfoService h5CharacterInfoService,
-                        @Value("${h5.secret:}") String secret) {
+                        H5ItemService h5ItemService, @Value("${h5.secret:}") String secret) {
         this.h5HangupService = h5HangupService;
         this.h5CharacterInfoService = h5CharacterInfoService;
+        this.h5ItemService = h5ItemService;
         this.secret = secret;
     }
 
@@ -184,8 +188,38 @@ public class H5Controller {
         return ResultBody.success(submitBody, h5HangupService.discardItems(requireCharacterId(req), req.getItemIds()));
     }
 
+    @Tag(name = "/h5/" + ApiConstant.LATEST)
+    @Operation(summary = "丢弃背包物品，返回操作后的角色信息")
+    @PostMapping("/" + ApiConstant.LATEST + "/item/drop")
+    public ResultBody<H5CharacterInfoRtnDTO> dropItem(@RequestHeader(value = SECRET_HEADER, required = false) String secretKey,
+                                                      @RequestBody SubmitBody<H5ItemReqDTO> submitBody) {
+        checkSecret(secretKey);
+        H5ItemReqDTO req = requireItemBody(submitBody);
+        h5ItemService.dropItem(req);
+        return ResultBody.success(submitBody, h5CharacterInfoService.info(req.getCharacterId()));
+    }
+
+    @Tag(name = "/h5/" + ApiConstant.LATEST)
+    @Operation(summary = "赠送背包物品给其他角色（快递送达），返回操作后的角色信息")
+    @PostMapping("/" + ApiConstant.LATEST + "/item/gift")
+    public ResultBody<H5CharacterInfoRtnDTO> giftItem(@RequestHeader(value = SECRET_HEADER, required = false) String secretKey,
+                                                      @RequestBody SubmitBody<H5ItemReqDTO> submitBody) {
+        checkSecret(secretKey);
+        H5ItemReqDTO req = requireItemBody(submitBody);
+        h5ItemService.giftItem(req);
+        return ResultBody.success(submitBody, h5CharacterInfoService.info(req.getCharacterId()));
+    }
+
     private H5HangupReqDTO requireBody(SubmitBody<H5HangupReqDTO> submitBody) {
         H5HangupReqDTO req = submitBody.getData();
+        if (req == null) {
+            throw new BizException(I18nUtil.getExceptionMessage("H5_HANGUP_PARAM_REQUIRED"));
+        }
+        return req;
+    }
+
+    private H5ItemReqDTO requireItemBody(SubmitBody<H5ItemReqDTO> submitBody) {
+        H5ItemReqDTO req = submitBody.getData();
         if (req == null) {
             throw new BizException(I18nUtil.getExceptionMessage("H5_HANGUP_PARAM_REQUIRED"));
         }

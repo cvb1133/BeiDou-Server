@@ -382,18 +382,30 @@ public class H5HangupService {
             left.addAll(items);
             return;
         }
+        ItemInformationProvider ii = ItemInformationProvider.getInstance();
         for (H5ItemRtnDTO item : items) {
             long remain = Optional.ofNullable(item.getQuantity()).orElse(0L);
             long granted = 0L;
+            boolean isEquip = ItemConstants.getInventoryType(item.getItemId()) == InventoryType.EQUIP;
             while (remain > 0) {
                 short chunk = (short) Math.min(remain, MAX_ITEM_QUANTITY_PER_CLAIM);
-                if (!InventoryManipulator.checkSpace(chr.getClient(), item.getItemId(), chunk, "")) {
+                if (!InventoryManipulator.checkSpace(chr.getClient(), item.getItemId(), isEquip ? 1 : chunk, "")) {
                     break;
                 }
-                // expiration 必须传 -1（无期限）；传 0 会被客户端当成 1970 年到期，登录时按「现金道具已过期」清除
-                InventoryManipulator.addById(chr.getClient(), item.getItemId(), chunk, "", -1, (short) 0, -1L);
-                granted += chunk;
-                remain -= chunk;
+                if (isEquip) {
+                    // 与怪物掉落一致：按游戏配置随机生成装备属性，一次放入一件
+                    Equip drop = ii.randomizeStats((Equip) ii.getEquipById(item.getItemId()));
+                    if (!InventoryManipulator.addFromDrop(chr.getClient(), drop, false, -1)) {
+                        break;
+                    }
+                    granted += 1;
+                    remain -= 1;
+                } else {
+                    // expiration 必须传 -1（无期限）；传 0 会被客户端当成 1970 年到期，登录时按「现金道具已过期」清除
+                    InventoryManipulator.addById(chr.getClient(), item.getItemId(), chunk, "", -1, (short) 0, -1L);
+                    granted += chunk;
+                    remain -= chunk;
+                }
             }
             if (granted > 0) {
                 given.add(H5ItemRtnDTO.builder()
@@ -428,7 +440,7 @@ public class H5HangupService {
     }
 
     /**
-     * 离线发放：金币/经验直接累加到 characters 表，物品按在线发放相同的白板规则写入背包表。
+     * 离线发放：金币/经验直接累加到 characters 表，物品按在线发放相同的规则写入背包表（装备随机属性）。
      * 升级判断无需处理：登录时 exp 原样加载，玩家获得任意经验时服务端会自动循环升级。
      */
     private H5HangupClaimRtnDTO claimOffline(CharactersDO chr) {
@@ -547,7 +559,7 @@ public class H5HangupService {
     }
 
     /**
-     * 离线写背包：优先补满现有未满堆叠，再找空格新放；装备与在线发放同样走 WZ 构造（白板）。
+     * 离线写背包：优先补满现有未满堆叠，再找空格新放；装备与在线发放同样走 WZ 构造并随机化属性。
      */
     private void grantItemsOffline(Connection con, CharactersDO chr, List<H5ItemRtnDTO> items,
                                    List<H5ItemRtnDTO> given, List<H5ItemRtnDTO> left) throws SQLException {
@@ -594,7 +606,7 @@ public class H5HangupService {
                 }
             }
 
-            // 2) 找空格新放（与 addById 一致：普通物品 new Item，装备走 WZ 构造）
+            // 2) 找空格新放（普通物品 new Item，装备走 WZ 构造并随机属性）
             TreeSet<Integer> used = occupiedOfflinePositions(con, chr, mit);
             int position = 1;
             while (remain > 0) {
@@ -606,7 +618,7 @@ public class H5HangupService {
                 }
                 long chunk = Math.min(remain, slotMax);
                 Item item = mit == InventoryType.EQUIP
-                        ? ii.getEquipById(dto.getItemId())
+                        ? ii.randomizeStats((Equip) ii.getEquipById(dto.getItemId()))
                         : new Item(dto.getItemId(), (short) 0, (short) chunk, 0);
                 item.setPosition((short) position);
                 item.setOwner("");
